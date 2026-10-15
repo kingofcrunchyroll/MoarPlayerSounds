@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "moarplayersounds",
+  "version": "${version}",
+  "name": "MoarPlayerSounds",
+  "description": "Tired of the usual sounds? Wanna sound like your favourite mob? Client-side, no server install needed.",
+  "authors": ["JesterDev"],
+  "contact": { "sources": "https://github.com/kingofcrunchyroll/MoarPlayerSounds" },
+  "license": "LicenseRef-Non-Commercial-Redistribution",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["io.moarplayersounds.client.MoarPlayerSoundsClient"]
+  },
+  "mixins": ["moarplayersounds.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
