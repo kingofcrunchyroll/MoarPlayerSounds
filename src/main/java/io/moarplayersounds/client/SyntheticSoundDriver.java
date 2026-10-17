@@ -1,16 +1,16 @@
 package io.moarplayersounds.client;
 
 import io.moarplayersounds.profile.ProfileManager;
+import io.moarplayersounds.profile.Resolved;
 import io.moarplayersounds.profile.SoundSlot;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.sound.SoundEvent;
 
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Drives the two slots vanilla players do not have: AMBIENT (random idle timer) and JUMP
- * (ground -> air transition with upward velocity). Local player only in Phase 1.
+ * (ground -> air transition with upward velocity). Local player only until Phase 3.
  */
 public final class SyntheticSoundDriver {
     private static final int AMBIENT_MIN_TICKS = 100, AMBIENT_MAX_TICKS = 400;
@@ -46,13 +46,14 @@ public final class SyntheticSoundDriver {
         }
     }
 
+    /** Plays the slot's sound at the player with the slot's volume/pitch/jitter. Returns false if the slot is vanilla. */
     public static boolean play(ClientPlayerEntity p, SoundSlot slot) {
-        SoundEvent ev = ProfileManager.resolve(slot);
-        if (ev == null) return false;
-        ThreadLocalRandom r = ThreadLocalRandom.current();
-        float pitch = 1.0F + (r.nextFloat() - r.nextFloat()) * 0.2F; // same spread vanilla mobs use
-        // Entity#playSound -> positioned at the player, PLAYERS category, respects volume sliders.
-        p.playSound(ev, 1.0F, pitch);
+        Resolved r = ProfileManager.resolve(slot);
+        if (r == null) return false;
+        ThreadLocalRandom rnd = ThreadLocalRandom.current();
+        float spread = 0.2F + r.cfg().jitter;                    // 0.2 is the vanilla mob spread
+        float pitch = r.cfg().pitch * (1.0F + (rnd.nextFloat() - rnd.nextFloat()) * spread);
+        p.playSound(r.event(), r.cfg().volume, pitch);          // no token recorded -> no double adjustment
         return true;
     }
 }

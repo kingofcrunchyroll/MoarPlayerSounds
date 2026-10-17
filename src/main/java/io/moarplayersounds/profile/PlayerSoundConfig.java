@@ -3,9 +3,9 @@ package io.moarplayersounds.profile;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** On-disk shape of config/moarplayersounds.json. Values: "vanilla" or "mob:<name>". */
+/** On-disk shape of config/moarplayersounds.json (version 2). */
 public final class PlayerSoundConfig {
-    public int version = 1;
+    public int version = 2;
     public boolean enabled = true;
-    public Map<String, String> slots = new LinkedHashMap<>();
+    public Map<String, SlotConfig> slots = new LinkedHashMap<>();
 }

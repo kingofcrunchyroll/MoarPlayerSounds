@@ -61,9 +61,9 @@ Privacy: only the hub sees IPs; no player-to-player exposure; deletion by UUID; 
 **Biggest technical risk (Phase 2/5):** playing imported audio. Vanilla only plays sounds registered through the resource system, so custom `.ogg` needs a runtime sound entry plus a stream source (a mixin on the sound loader/resource lookup or an injected in-memory resource pack). Needs a spike in the dev environment before committing.
 
 ## 5. Phases
-1. **Local replacement + mob presets** — implemented (this repo), uncompiled.
-2. Per-slot volume/pitch, imported `.ogg` + validator.
-3. Remote attribution (section 3), still local profiles for test.
+1. **Local replacement + mob presets** — done, tested in-game.
+2. **Per-slot volume/pitch/jitter, imported `.ogg` + validator** — written, awaiting first build/test (see Phase 2 below).
+3. **Remote attribution (section 3), with hand-assigned profiles for testing** — written, off by default, awaiting a two-player test (see section 8).
 4. Hub client + reference hub; profile sync.
 5. Blob transfer, cache, failure recovery.
 6. Config screen, polish, test plan execution.
@@ -75,3 +75,53 @@ Privacy: only the hub sees IPs; no player-to-player exposure; deletion by UUID; 
 4. Swim and enter water from height: SWIM/SPLASH replaced; fall >3 blocks: FALL only if the mob has a fall sound, else vanilla.
 5. `/playersound disable` -> all vanilla. Delete config -> defaults. Corrupt config JSON -> game starts, warning logged.
 6. Singleplayer and a vanilla server: confirm no doubled sound; other entities' sounds unchanged.
+
+## 7. Phase 2 design (per-slot tuning + imported audio)
+
+**Volume / pitch / jitter.** The getter hooks can only choose a `SoundEvent`; volume and pitch are decided at the play call. So the hook leaves a short-lived token (`PendingSounds`: sound id, 250 ms TTL, must be within 3 blocks of the local player) and a narrow `ClientWorld#playSound(DDDSoundEvent..J)` injection applies the slot's settings to *that* sound only, then re-issues it. The re-issued call finds no token, so no loop; a mob's identical sound elsewhere is never touched. Note vanilla clamps final gain to 1.0, so volume above 100% only extends audible range.
+
+**Imported audio.** A clip gets the runtime id `moarplayersounds:custom/<sha256>` and plays through the *normal* vanilla pipeline (positioning, attenuation, category, sliders):
+1. `AudioLibrary` stores validated files as `config/moarplayersounds/audio/<sha256>.ogg` plus `library.json` (name -> hash). Limits: 256 KiB/file, 5 s, mono Ogg Vorbis 8–48 kHz, 32 clips, 4 MiB total.
+2. `OggValidator` (pure Java, no decoding) checks the capture pattern, page structure and CRC of every page, one logical stream, Vorbis identification header, mono, rate, duration from the final granule position. Tested against real files: valid mono accepted; stereo, Opus, truncated, bit-flipped, oversized, too long, chained and garbage rejected.
+3. `CustomSounds.eventFor(hash)` creates the `SoundEvent` and (re-)inserts a `WeightedSoundSet` into `SoundManager.sounds` via an accessor mixin, on every use, because a resource reload (F3+T) rebuilds that map.
+4. `SoundLoaderMixin` intercepts `SoundLoader#loadStatic(Identifier)` for our namespace only, decoding the library file with the game's own `OggAudioStream` (iteration and size capped), cached per loader and cleared on `close()`.
+5. Any failure anywhere returns `null` -> the slot plays vanilla and one warning is logged.
+
+Filenames are only ever derived from a 64-hex hash, so no path can reach the file API from config or (later) from the network.
+
+**Unverified until your build/run:** `Sound`/`WeightedSoundSet` constructor use, `RegistrationType.getByName("file")`, `AudioStream.read(int)` end-of-stream behaviour, and that `SoundManager#sounds` is a mutable map. If a custom clip is silent, the log will say which step failed.
+
+### Phase 2 test plan
+1. Build; start; confirm log line `Phase 2 ... initialised`. Existing `moarplayersounds.json` from Phase 1 must still load (plain-string slots are migrated).
+2. `/playersound volume hurt 30`, take damage: quieter. `pitch hurt 70`: deeper. `jitter hurt 30`: varied. `status` shows them. A *zombie* hurt next to you stays unchanged.
+3. Import `test-assets/tone_440hz_mono.ogg`: `/playersound import beep C:\path\to\tone_440hz_mono.ogg`, then `/playersound slot hurt custom beep`, `preview hurt`, take damage.
+4. Reject checks: import a stereo file, a >5 s file, a renamed `.mp3`, a huge file, a missing path -> each gives a clear error, no crash.
+5. F3+T (reload resources), take damage again: custom clip still plays.
+6. `/playersound audio remove beep`: slot falls back to vanilla without errors. Restart the game: clips and slot assignments persist.
+7. Walk away from a custom-sound source: it is positional and attenuates; stand underwater/in a cave to confirm normal mixing.
+
+## 8. Phase 3 (remote players) — written, off by default
+
+Scope: make *you* hear another player with the sound profile **you assigned to them**. There is no network sync yet; Phase 4 fills the same `RemoteProfiles` table from synced profiles, so the detection code written here is what Phase 4 uses.
+
+- `RemoteProfiles` — UUID -> slot settings, stored in `config/moarplayersounds/remote.json`; a master switch (`/playersound remote enable|disable`), default OFF.
+- `RemoteSounds` — takes a sound that is about to play and decides if another player made it. Only ids in a fixed whitelist of vanilla player sounds are considered (`entity.player.hurt*`, `death`, `small_fall`, `big_fall`, `swim`, `splash`, `splash.high_speed`); everything else returns immediately.
+  - *Position path* (`ClientWorld#playSound`, 9-arg): exactly one player within 1.5 blocks horizontally / 3 vertically of the sound. Zero, two or more, or the local player among them -> vanilla.
+  - *Entity path* (`ClientWorld#playSoundFromEntity`): maker known exactly.
+  - Replacement keeps position, category and seed, and applies the assigned volume/pitch/jitter. Replacement ids are not in the whitelist, so there is no loop.
+- `RemoteSyntheticDriver` — AMBIENT and JUMP for players within 24 blocks, produced by the listener from a timer and observed movement. Jump detection for other players is experimental.
+- Everything falls back to vanilla on any exception (one logged warning).
+
+**Open questions the first real test answers** (use `/playersound remote debug true`):
+1. Do other players' hurt/death/fall/swim sounds arrive on the position path, the entity path, or both? The log prints which, and how many candidate players matched.
+2. Is the 1.5/3.0 block tolerance enough while the other player is running or falling?
+3. Does remote jump detection fire at a sensible rate?
+
+### Phase 3 test plan (needs a second player on the same server, or a second client on LAN)
+1. Both join the same server. You: `/playersound remote debug true`, `/playersound remote enable`, `/playersound remote set <friend> enderman`.
+2. Friend takes damage near you (fall, hit): you should hear enderman hurt. Friend `/kill`: enderman death. Friend swims / lands from a height: swim, splash, fall (fall only if the mob has a fall sound; otherwise vanilla).
+3. Stand still near the friend for ~20 s: ambient plays. Friend jumps repeatedly: jump sound if the mob has one (e.g. `slime`).
+4. Ambiguity: both players stand on the same block and the friend takes damage: expect vanilla (log shows 2 candidates).
+5. A third player or a mob next to the friend: their sounds stay vanilla; a zombie's hurt sound is unchanged.
+6. `/playersound remote disable`: everything vanilla again. `/playersound remote clear <friend>`: same for that player.
+7. Send me the `[remote]` lines from `latest.log` from steps 2–4 so the tolerance and path questions can be settled.
