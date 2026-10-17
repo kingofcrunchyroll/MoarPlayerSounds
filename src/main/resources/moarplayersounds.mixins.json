@@ -3,6 +3,6 @@
   "minVersion": "0.8",
   "package": "io.moarplayersounds.mixin",
   "compatibilityLevel": "JAVA_21",
-  "client": ["PlayerEntityMixin", "LivingEntityMixin"],
+  "client": ["PlayerEntityMixin", "LivingEntityMixin", "ClientWorldMixin", "SoundLoaderMixin", "SoundManagerAccessor"],
   "injectors": { "defaultRequire": 0 }
 }

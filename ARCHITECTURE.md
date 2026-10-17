@@ -61,8 +61,8 @@ Privacy: only the hub sees IPs; no player-to-player exposure; deletion by UUID; 
 **Biggest technical risk (Phase 2/5):** playing imported audio. Vanilla only plays sounds registered through the resource system, so custom `.ogg` needs a runtime sound entry plus a stream source (a mixin on the sound loader/resource lookup or an injected in-memory resource pack). Needs a spike in the dev environment before committing.
 
 ## 5. Phases
-1. **Local replacement + mob presets** — implemented (this repo), uncompiled.
-2. Per-slot volume/pitch, imported `.ogg` + validator.
+1. **Local replacement + mob presets** — done, tested in-game.
+2. **Per-slot volume/pitch/jitter, imported `.ogg` + validator** — written, awaiting first build/test (see Phase 2 below).
 3. Remote attribution (section 3), still local profiles for test.
 4. Hub client + reference hub; profile sync.
 5. Blob transfer, cache, failure recovery.
@@ -75,3 +75,27 @@ Privacy: only the hub sees IPs; no player-to-player exposure; deletion by UUID; 
 4. Swim and enter water from height: SWIM/SPLASH replaced; fall >3 blocks: FALL only if the mob has a fall sound, else vanilla.
 5. `/playersound disable` -> all vanilla. Delete config -> defaults. Corrupt config JSON -> game starts, warning logged.
 6. Singleplayer and a vanilla server: confirm no doubled sound; other entities' sounds unchanged.
+
+## 7. Phase 2 design (per-slot tuning + imported audio)
+
+**Volume / pitch / jitter.** The getter hooks can only choose a `SoundEvent`; volume and pitch are decided at the play call. So the hook leaves a short-lived token (`PendingSounds`: sound id, 250 ms TTL, must be within 3 blocks of the local player) and a narrow `ClientWorld#playSound(DDDSoundEvent..J)` injection applies the slot's settings to *that* sound only, then re-issues it. The re-issued call finds no token, so no loop; a mob's identical sound elsewhere is never touched. Note vanilla clamps final gain to 1.0, so volume above 100% only extends audible range.
+
+**Imported audio.** A clip gets the runtime id `moarplayersounds:custom/<sha256>` and plays through the *normal* vanilla pipeline (positioning, attenuation, category, sliders):
+1. `AudioLibrary` stores validated files as `config/moarplayersounds/audio/<sha256>.ogg` plus `library.json` (name -> hash). Limits: 256 KiB/file, 5 s, mono Ogg Vorbis 8–48 kHz, 32 clips, 4 MiB total.
+2. `OggValidator` (pure Java, no decoding) checks the capture pattern, page structure and CRC of every page, one logical stream, Vorbis identification header, mono, rate, duration from the final granule position. Tested against real files: valid mono accepted; stereo, Opus, truncated, bit-flipped, oversized, too long, chained and garbage rejected.
+3. `CustomSounds.eventFor(hash)` creates the `SoundEvent` and (re-)inserts a `WeightedSoundSet` into `SoundManager.sounds` via an accessor mixin, on every use, because a resource reload (F3+T) rebuilds that map.
+4. `SoundLoaderMixin` intercepts `SoundLoader#loadStatic(Identifier)` for our namespace only, decoding the library file with the game's own `OggAudioStream` (iteration and size capped), cached per loader and cleared on `close()`.
+5. Any failure anywhere returns `null` -> the slot plays vanilla and one warning is logged.
+
+Filenames are only ever derived from a 64-hex hash, so no path can reach the file API from config or (later) from the network.
+
+**Unverified until your build/run:** `Sound`/`WeightedSoundSet` constructor use, `RegistrationType.getByName("file")`, `AudioStream.read(int)` end-of-stream behaviour, and that `SoundManager#sounds` is a mutable map. If a custom clip is silent, the log will say which step failed.
+
+### Phase 2 test plan
+1. Build; start; confirm log line `Phase 2 ... initialised`. Existing `moarplayersounds.json` from Phase 1 must still load (plain-string slots are migrated).
+2. `/playersound volume hurt 30`, take damage: quieter. `pitch hurt 70`: deeper. `jitter hurt 30`: varied. `status` shows them. A *zombie* hurt next to you stays unchanged.
+3. Import `test-assets/tone_440hz_mono.ogg`: `/playersound import beep C:\path\to\tone_440hz_mono.ogg`, then `/playersound slot hurt custom beep`, `preview hurt`, take damage.
+4. Reject checks: import a stereo file, a >5 s file, a renamed `.mp3`, a huge file, a missing path -> each gives a clear error, no crash.
+5. F3+T (reload resources), take damage again: custom clip still plays.
+6. `/playersound audio remove beep`: slot falls back to vanilla without errors. Restart the game: clips and slot assignments persist.
+7. Walk away from a custom-sound source: it is positional and attenuates; stand underwater/in a cave to confirm normal mixing.
