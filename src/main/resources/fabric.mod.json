@@ -4,6 +4,7 @@
   "version": "${version}",
   "name": "MoarPlayerSounds",
   "description": "Tired of the usual sounds? Wanna sound like your favourite mob? Client-side, no server install needed.",
+  "icon": "assets/MoarPlayerSounds.png",
   "authors": [
     "JesterDev"
   ],
