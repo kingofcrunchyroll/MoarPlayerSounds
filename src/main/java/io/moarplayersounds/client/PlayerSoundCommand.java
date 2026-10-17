@@ -15,6 +15,11 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.command.CommandSource;
 import net.minecraft.text.Text;
 
+import com.mojang.brigadier.arguments.BoolArgumentType;
+import io.moarplayersounds.remote.RemoteProfiles;
+import io.moarplayersounds.remote.RemoteSounds;
+import net.minecraft.client.network.PlayerListEntry;
+
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -39,6 +44,18 @@ public final class PlayerSoundCommand {
                 return CommandSource.suggestMatching(l, b);
             };
 
+    private static final SuggestionProvider<FabricClientCommandSource> PLAYERS = (ctx, b) -> {
+        List<String> names = new ArrayList<>();
+        var h = MinecraftClient.getInstance().getNetworkHandler();
+        if (h != null) for (PlayerListEntry e : h.getPlayerList()) names.add(e.getProfile().getName());
+        return CommandSource.suggestMatching(names, b);
+    };
+
+    private static PlayerListEntry findPlayer(String name) {
+        var h = MinecraftClient.getInstance().getNetworkHandler();
+        return h == null ? null : h.getPlayerListEntry(name);
+    }
+
     private static List<String> slotKeys() {
         List<String> l = new ArrayList<>();
         for (SoundSlot s : SoundSlot.values()) l.add(s.key());
@@ -62,6 +79,40 @@ public final class PlayerSoundCommand {
                 c.getSource().sendFeedback(Text.literal(sb.toString()));
                 return 1;
             }))
+            .then(ClientCommandManager.literal("remote")
+                .then(ClientCommandManager.literal("enable").executes(c -> { RemoteProfiles.setEnabled(true); return say(c.getSource(), "Remote players: ON (profiles you assigned are used for those players' sounds)."); }))
+                .then(ClientCommandManager.literal("disable").executes(c -> { RemoteProfiles.setEnabled(false); return say(c.getSource(), "Remote players: OFF (vanilla sounds)."); }))
+                .then(ClientCommandManager.literal("debug").then(ClientCommandManager.argument("on", BoolArgumentType.bool()).executes(c -> {
+                    boolean on = BoolArgumentType.getBool(c, "on");
+                    RemoteSounds.setDebug(on);
+                    return say(c.getSource(), "Remote debug logging " + (on ? "ON: watch latest.log for [remote] lines." : "OFF."));
+                })))
+                .then(ClientCommandManager.literal("status").executes(c -> {
+                    StringBuilder sb = new StringBuilder("Remote players: " + (RemoteProfiles.isEnabled() ? "ON" : "OFF")
+                            + ", debug " + (RemoteSounds.isDebug() ? "ON" : "OFF"));
+                    for (String line : RemoteProfiles.describe()) sb.append("\n  ").append(line);
+                    c.getSource().sendFeedback(Text.literal(sb.toString()));
+                    return 1;
+                }))
+                .then(ClientCommandManager.literal("set")
+                    .then(ClientCommandManager.argument("player", StringArgumentType.word()).suggests(PLAYERS)
+                        .then(ClientCommandManager.argument("mob", StringArgumentType.word()).suggests(MOBS).executes(c -> {
+                            PlayerListEntry e = findPlayer(StringArgumentType.getString(c, "player"));
+                            String mob = StringArgumentType.getString(c, "mob").toLowerCase(Locale.ROOT);
+                            if (e == null) return say(c.getSource(), "That player is not on this server right now.");
+                            if (!MobSoundIndex.hasMob(mob)) return say(c.getSource(), "Unknown mob '" + mob + "'. Try /playersound list");
+                            List<String> set = RemoteProfiles.setPreset(e.getProfile().getId(), e.getProfile().getName(), mob);
+                            return say(c.getSource(), e.getProfile().getName() + " now sounds like '" + mob + "' for you: " + String.join(", ", set)
+                                    + (RemoteProfiles.isEnabled() ? "" : "\n(Remote players is OFF: /playersound remote enable)"));
+                        }))))
+                .then(ClientCommandManager.literal("clear")
+                    .then(ClientCommandManager.argument("player", StringArgumentType.word()).suggests(PLAYERS).executes(c -> {
+                        String name = StringArgumentType.getString(c, "player");
+                        PlayerListEntry e = findPlayer(name);
+                        boolean had = (e != null && RemoteProfiles.clear(e.getProfile().getId())) || RemoteProfiles.clearByName(name);
+                        return say(c.getSource(), had ? "Cleared " + name + "." : "No profile for " + name + ".");
+                    })))
+                .then(ClientCommandManager.literal("reset").executes(c -> { RemoteProfiles.clearAll(); return say(c.getSource(), "All remote profiles cleared."); })))
             .then(ClientCommandManager.literal("gui").executes(c -> { MoarPlayerSoundsClient.requestOpenConfig(); return 1; }))
             .then(ClientCommandManager.literal("enable").executes(c -> { ProfileManager.setEnabled(true); return say(c.getSource(), "Enabled."); }))
             .then(ClientCommandManager.literal("disable").executes(c -> { ProfileManager.setEnabled(false); return say(c.getSource(), "Disabled (vanilla sounds)."); }))

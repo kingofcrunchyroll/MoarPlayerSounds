@@ -17,7 +17,9 @@ public final class MoarPlayerSoundsClient implements ClientModInitializer {
     public void onInitializeClient() {
         AudioLibrary.load();
         ProfileManager.load();
+        io.moarplayersounds.remote.RemoteProfiles.load();
         ClientTickEvents.END_CLIENT_TICK.register(SyntheticSoundDriver::tick);
+        ClientTickEvents.END_CLIENT_TICK.register(io.moarplayersounds.remote.RemoteSyntheticDriver::tick);
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
             if (openConfigRequested) {
                 openConfigRequested = false;

@@ -63,7 +63,7 @@ Privacy: only the hub sees IPs; no player-to-player exposure; deletion by UUID; 
 ## 5. Phases
 1. **Local replacement + mob presets** — done, tested in-game.
 2. **Per-slot volume/pitch/jitter, imported `.ogg` + validator** — written, awaiting first build/test (see Phase 2 below).
-3. Remote attribution (section 3), still local profiles for test.
+3. **Remote attribution (section 3), with hand-assigned profiles for testing** — written, off by default, awaiting a two-player test (see section 8).
 4. Hub client + reference hub; profile sync.
 5. Blob transfer, cache, failure recovery.
 6. Config screen, polish, test plan execution.
@@ -99,3 +99,29 @@ Filenames are only ever derived from a 64-hex hash, so no path can reach the fil
 5. F3+T (reload resources), take damage again: custom clip still plays.
 6. `/playersound audio remove beep`: slot falls back to vanilla without errors. Restart the game: clips and slot assignments persist.
 7. Walk away from a custom-sound source: it is positional and attenuates; stand underwater/in a cave to confirm normal mixing.
+
+## 8. Phase 3 (remote players) — written, off by default
+
+Scope: make *you* hear another player with the sound profile **you assigned to them**. There is no network sync yet; Phase 4 fills the same `RemoteProfiles` table from synced profiles, so the detection code written here is what Phase 4 uses.
+
+- `RemoteProfiles` — UUID -> slot settings, stored in `config/moarplayersounds/remote.json`; a master switch (`/playersound remote enable|disable`), default OFF.
+- `RemoteSounds` — takes a sound that is about to play and decides if another player made it. Only ids in a fixed whitelist of vanilla player sounds are considered (`entity.player.hurt*`, `death`, `small_fall`, `big_fall`, `swim`, `splash`, `splash.high_speed`); everything else returns immediately.
+  - *Position path* (`ClientWorld#playSound`, 9-arg): exactly one player within 1.5 blocks horizontally / 3 vertically of the sound. Zero, two or more, or the local player among them -> vanilla.
+  - *Entity path* (`ClientWorld#playSoundFromEntity`): maker known exactly.
+  - Replacement keeps position, category and seed, and applies the assigned volume/pitch/jitter. Replacement ids are not in the whitelist, so there is no loop.
+- `RemoteSyntheticDriver` — AMBIENT and JUMP for players within 24 blocks, produced by the listener from a timer and observed movement. Jump detection for other players is experimental.
+- Everything falls back to vanilla on any exception (one logged warning).
+
+**Open questions the first real test answers** (use `/playersound remote debug true`):
+1. Do other players' hurt/death/fall/swim sounds arrive on the position path, the entity path, or both? The log prints which, and how many candidate players matched.
+2. Is the 1.5/3.0 block tolerance enough while the other player is running or falling?
+3. Does remote jump detection fire at a sensible rate?
+
+### Phase 3 test plan (needs a second player on the same server, or a second client on LAN)
+1. Both join the same server. You: `/playersound remote debug true`, `/playersound remote enable`, `/playersound remote set <friend> enderman`.
+2. Friend takes damage near you (fall, hit): you should hear enderman hurt. Friend `/kill`: enderman death. Friend swims / lands from a height: swim, splash, fall (fall only if the mob has a fall sound; otherwise vanilla).
+3. Stand still near the friend for ~20 s: ambient plays. Friend jumps repeatedly: jump sound if the mob has one (e.g. `slime`).
+4. Ambiguity: both players stand on the same block and the friend takes damage: expect vanilla (log shows 2 candidates).
+5. A third player or a mob next to the friend: their sounds stay vanilla; a zombie's hurt sound is unchanged.
+6. `/playersound remote disable`: everything vanilla again. `/playersound remote clear <friend>`: same for that player.
+7. Send me the `[remote]` lines from `latest.log` from steps 2–4 so the tolerance and path questions can be settled.
