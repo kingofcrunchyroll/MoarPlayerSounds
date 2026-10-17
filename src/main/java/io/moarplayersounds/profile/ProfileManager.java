@@ -102,6 +102,12 @@ public final class ProfileManager {
             if (c == null || c.isVanilla()) return null;
             cfg = c.copy();
         }
+        return resolveConfig(slot, cfg);
+    }
+
+    /** Resolves any slot settings (local or a remote player's) to a concrete sound; null means keep vanilla. */
+    public static Resolved resolveConfig(SoundSlot slot, SlotConfig cfg) {
+        if (cfg == null || cfg.isVanilla()) return null;
         SoundEvent ev = null;
         if (cfg.source.startsWith("mob:")) {
             ev = MobSoundIndex.pick(cfg.source.substring(4), slot);
