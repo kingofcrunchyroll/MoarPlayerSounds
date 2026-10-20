@@ -106,7 +106,7 @@ Scope: make *you* hear another player with the sound profile **you assigned to t
 
 - `RemoteProfiles` — UUID -> slot settings, stored in `config/moarplayersounds/remote.json`; a master switch (`/playersound remote enable|disable`), default OFF.
 - `RemoteSounds` — takes a sound that is about to play and decides if another player made it. Only ids in a fixed whitelist of vanilla player sounds are considered (`entity.player.hurt*`, `death`, `small_fall`, `big_fall`, `swim`, `splash`, `splash.high_speed`); everything else returns immediately.
-  - *Position path* (`ClientWorld#playSound`, 9-arg): exactly one player within 1.5 blocks horizontally / 3 vertically of the sound. Zero, two or more, or the local player among them -> vanilla.
+  - *Position path* (`ClientWorld#playSound`, 9-arg): the nearest player within 3 blocks horizontally / 4 vertically of the sound, accepted only if the next-nearest is at least 1 block farther away; otherwise (or if the nearest is the local player) vanilla. (First version required exactly one player within 1.5 blocks, which failed in melee fights.)
   - *Entity path* (`ClientWorld#playSoundFromEntity`): maker known exactly.
   - Replacement keeps position, category and seed, and applies the assigned volume/pitch/jitter. Replacement ids are not in the whitelist, so there is no loop.
 - `RemoteSyntheticDriver` — AMBIENT and JUMP for players within 24 blocks, produced by the listener from a timer and observed movement. Jump detection for other players is experimental.
@@ -125,3 +125,9 @@ Scope: make *you* hear another player with the sound profile **you assigned to t
 5. A third player or a mob next to the friend: their sounds stay vanilla; a zombie's hurt sound is unchanged.
 6. `/playersound remote disable`: everything vanilla again. `/playersound remote clear <friend>`: same for that player.
 7. Send me the `[remote]` lines from `latest.log` from steps 2–4 so the tolerance and path questions can be settled.
+
+### Findings from the first two-player test (LAN, host + one friend)
+- Other players' hurt, death, fall and swim sounds arrive on the **position path**; no entity-attributed packets were seen. The entity path stays as a harmless fallback.
+- The old "exactly one player within 1.5 blocks" rule marked roughly half of fight sounds ambiguous (attacker and victim close together) and a few as zero candidates (the other player's client position lagging the server's). Replaced by nearest-with-margin and wider tolerances; debug lines now print distances.
+- The local player's own `big_fall`/`small_fall` also arrive as position packets, so with a FALL replacement set locally a vanilla fall sound may play in addition to the replaced one. To be checked by ear (see test plan).
+- Phase 3 only changes what *you* hear; it sends nothing. Your friend hears your sounds only if they assign a profile to you on their own client (`/playersound remote set <your name> <mob>`) until Phase 4 syncs profiles.
