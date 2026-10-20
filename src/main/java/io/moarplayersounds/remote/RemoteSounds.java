@@ -39,8 +39,9 @@ public final class RemoteSounds {
         PLAYER_SOUNDS.put("entity.player.splash.high_speed", SoundSlot.SPLASH);
     }
 
-    private static final double HORIZONTAL_TOLERANCE_SQ = 1.5 * 1.5;
-    private static final double VERTICAL_TOLERANCE = 3.0;   // falling players lag behind the server position
+    private static final double HORIZONTAL_TOLERANCE_SQ = 3.0 * 3.0;   // other players lag behind the server position
+    private static final double VERTICAL_TOLERANCE = 4.0;   // falling players lag further vertically
+    private static final double MARGIN = 1.0;               // the nearest player must be this much closer than the next
 
     private static volatile boolean debug;
     private static boolean warned;
@@ -57,7 +58,11 @@ public final class RemoteSounds {
         return "minecraft".equals(id.getNamespace()) ? PLAYER_SOUNDS.get(id.getPath()) : null;
     }
 
-    /** Position-packet path. */
+    /**
+     * Position-packet path (the one vanilla uses for other players' sounds, confirmed in testing).
+     * The maker is the NEAREST player to the sound position, accepted only when no other player is
+     * nearly as close, so melee fights no longer count as ambiguous while overlapping players still do.
+     */
     public static Replacement forPosition(SoundEvent ev, double x, double y, double z, float volume, float pitch) {
         try {
             SoundSlot slot = slotOf(ev);
@@ -68,20 +73,29 @@ public final class RemoteSounds {
             ClientWorld w = mc.world;
             if (w == null) return null;
 
-            PlayerEntity match = null;
+            PlayerEntity best = null;
+            double bestD = Double.MAX_VALUE, secondD = Double.MAX_VALUE, nearestAny = Double.MAX_VALUE;
             int candidates = 0;
             for (PlayerEntity p : w.getPlayers()) {
-                double dx = p.getX() - x, dz = p.getZ() - z;
-                if (dx * dx + dz * dz <= HORIZONTAL_TOLERANCE_SQ && Math.abs(p.getY() - y) <= VERTICAL_TOLERANCE) {
-                    candidates++;
-                    match = p;
-                }
+                double dx = p.getX() - x, dy = p.getY() - y, dz = p.getZ() - z;
+                double d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                if (d < nearestAny) nearestAny = d;
+                if (dx * dx + dz * dz > HORIZONTAL_TOLERANCE_SQ || Math.abs(dy) > VERTICAL_TOLERANCE) continue;
+                candidates++;
+                if (d < bestD) { secondD = bestD; bestD = d; best = p; }
+                else if (d < secondD) secondD = d;
             }
-            if (debug) MoarPlayerSoundsMod.LOGGER.info("[remote] position packet {} at {},{},{} -> {} candidate(s){}",
-                    ev.getId(), round(x), round(y), round(z), candidates,
-                    candidates == 1 ? " (" + match.getGameProfile().getName() + (match == mc.player ? ", LOCAL" : "") + ")" : "");
-            if (!enabled || candidates != 1 || match == mc.player) return null;   // ambiguous or local: keep vanilla
-            return build(match.getUuid(), slot, volume, pitch, "position");
+            boolean clear = best != null && (secondD == Double.MAX_VALUE || secondD - bestD >= MARGIN);
+            if (debug) {
+                MoarPlayerSoundsMod.LOGGER.info("[remote] position packet {} at {},{},{} -> {} candidate(s); nearest {}{}{}",
+                        ev.getId(), round(x), round(y), round(z), candidates,
+                        best == null ? "none (closest player of any kind " + round(nearestAny) + " blocks away)"
+                                : best.getGameProfile().getName() + (best == mc.player ? " (LOCAL)" : "") + " at " + round(bestD),
+                        secondD == Double.MAX_VALUE ? "" : ", next at " + round(secondD),
+                        best != null && !clear ? " -> AMBIGUOUS" : "");
+            }
+            if (!enabled || !clear || best == mc.player) return null;      // unclear or local: keep vanilla
+            return build(best.getUuid(), slot, volume, pitch, "position");
         } catch (Throwable t) {
             return failed(t);
         }
